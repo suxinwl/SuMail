@@ -1,7 +1,3 @@
-﻿<p align="center">
-  <img src="docs/image/zh/01.png" alt="速信云邮" width="600">
-</p>
-
 <h1 align="center">速信云邮 Suxin Mail</h1>
 
 <p align="center">
@@ -11,7 +7,7 @@
 
 
 <p align="center">
-  <a href="README.md">中文</a> · <a href="docs/README_en.md">English</a> · <a href="docs/INSTALL_zh-CN.md">部署指南</a> · <a href="https://github.com/1186258278/SuxinMail/releases">下载</a>
+  <a href="README.md">中文</a> · <a href="docs/README_en.md">English</a> · <a href="docs/INSTALL_zh-CN.md">部署指南</a> · <a href="[https://github.com/1186258278/SuxinMail](https://github.com/suxinwl/SuMail/)releases">下载</a>
 </p>
 
 ---
@@ -287,8 +283,7 @@ _dmarc    TXT    "v=DMARC1; p=quarantine; rua=mailto:admin@example.com"
 
 <p align="center">
   <b>© 2026 武汉晴辰天下网络科技有限公司</b><br>
-  <a href="https://qingchencloud.com">官网</a> · 
-  <a href="https://github.com/1186258278/SuxinMail/issues">反馈</a> · 
+  <a href="https://www.suxinwl.com">官网</a> · 
   <a href="docs/INSTALL_zh-CN.md">文档</a>
 </p>
 
