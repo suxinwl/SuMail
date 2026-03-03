@@ -282,7 +282,7 @@ _dmarc    TXT    "v=DMARC1; p=quarantine; rua=mailto:admin@example.com"
 ---
 
 <p align="center">
-  <b>© 2026 武汉晴辰天下网络科技有限公司</b><br>
+  <b>© 2026 深圳市速信网络科技有限公司</b><br>
   <a href="https://www.suxinwl.com">官网</a> · 
   <a href="docs/INSTALL_zh-CN.md">文档</a>
 </p>
