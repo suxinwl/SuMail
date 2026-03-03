@@ -1,0 +1,385 @@
+﻿package main
+
+import (
+	"context"
+	"embed"
+	"flag"
+	"fmt"
+	"io/fs"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"goemail/internal/api"
+	"goemail/internal/cert"
+	"goemail/internal/cleanup"
+	"goemail/internal/config"
+	"goemail/internal/database"
+	"goemail/internal/mailer"
+	"goemail/internal/receiver"
+
+	"github.com/gin-gonic/gin"
+)
+
+//go:embed static/*
+var staticFiles embed.FS
+
+func main() {
+	// 命令行参数
+	resetPwd := flag.Bool("reset", false, "Reset admin password to 123456")
+	resetTOTP := flag.Bool("reset-totp", false, "Reset admin 2FA (TOTP)")
+	flag.Parse()
+
+	// 1. 加载配置
+	config.LoadConfig()
+
+	// 2. 初始化数据库
+	database.InitDB()
+
+	// 处理重置密码指令
+	if *resetPwd {
+		// 使用 Bcrypt 哈希存储密码
+		// 为了简化运维，重置操作仍然将密码设为 123456，但存储为 Hash
+		// 建议管理员在重置后立即登录并修改密码
+		hashedPassword, err := database.HashPassword("123456")
+		if err != nil {
+			log.Fatal("Failed to hash password:", err)
+		}
+
+		var user database.User
+		if err := database.DB.Where("username = ?", "admin").First(&user).Error; err == nil {
+			user.Password = hashedPassword
+			database.DB.Save(&user)
+			fmt.Println("[SUCCESS] Admin password has been reset to: 123456")
+		} else {
+			// 如果用户不存在，创建它
+			user = database.User{Username: "admin", Password: hashedPassword}
+			database.DB.Create(&user)
+			fmt.Println("[SUCCESS] Admin user created with password: 123456")
+		}
+		os.Exit(0)
+	}
+
+	// 处理重置两步验证 (TOTP) 指令
+	if *resetTOTP {
+		var user database.User
+		if err := database.DB.Where("username = ?", "admin").First(&user).Error; err == nil {
+			user.TOTPEnabled = false
+			user.TOTPSecret = ""
+			database.DB.Save(&user)
+			fmt.Println("[SUCCESS] Admin 2FA (TOTP) has been disabled.")
+			fmt.Println("You can now login without two-factor authentication.")
+		} else {
+			fmt.Println("[ERROR] Admin user not found.")
+		}
+		os.Exit(0)
+	}
+
+	// 启动邮件发送队列 Worker
+	mailer.StartQueueWorker()
+
+	// 启动 SMTP 接收服务 (邮件转发)
+	receiver.StartReceiver()
+
+	// 启动营销任务调度器 (定时发送)
+	api.StartCampaignScheduler()
+
+	// 启动数据清理调度器
+	cleanup.StartScheduler()
+
+	// 初始化证书管理器并启动证书检查调度器
+	api.InitCertManager()
+	cert.StartScheduler()
+
+	// 3. 设置 Gin
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
+
+	// CORS 中间件 (支持前后端分离部署)
+	r.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", c.GetHeader("Origin"))
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		c.Header("Access-Control-Allow-Credentials", "true")
+		c.Header("Access-Control-Max-Age", "86400")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		c.Next()
+	})
+
+	// 请求日志中间件 (审计追踪)
+	r.Use(func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		c.Next()
+		latency := time.Since(start)
+		status := c.Writer.Status()
+		// 记录非静态资源请求
+		if len(path) > 4 && path[:5] == "/api/" {
+			log.Printf("[Audit] %s %s %d %v %s", c.Request.Method, path, status, latency, c.ClientIP())
+		}
+	})
+
+	// 请求体大小限制 (32MB)
+	r.MaxMultipartMemory = 32 << 20
+
+	// 4. API 路由
+	apiGroup := r.Group("/api/v1")
+	{
+		// 公开接口 (添加速率限制)
+		apiGroup.POST("/login", api.RateLimitMiddleware(api.GetLoginLimiter()), api.LoginHandler)
+		apiGroup.GET("/captcha", api.RateLimitMiddleware(api.GetCaptchaLimiter()), api.CaptchaHandler)
+		apiGroup.GET("/wallpaper", api.WallpaperHandler)
+
+		// TOTP 两步验证 (公开接口，用于登录时验证)
+		apiGroup.POST("/totp/verify", api.RateLimitMiddleware(api.GetLoginLimiter()), api.TOTPVerifyHandler)
+
+		// 健康检查 (公开，用于重启后前端轮询检测服务存活)
+		apiGroup.GET("/health", api.HealthHandler)
+
+		// 追踪接口 (公开)
+		apiGroup.GET("/track/open/:id", api.TrackOpenHandler)
+		apiGroup.GET("/track/click/:id", api.TrackClickHandler)
+		apiGroup.GET("/track/unsubscribe/:id", api.UnsubscribeHandler)
+
+		// 需要认证的接口 (支持 JWT 或 API Key)
+		authorized := apiGroup.Group("/")
+		authorized.Use(api.AuthMiddleware())
+		{
+			// 发送接口 (现在受保护)
+			authorized.POST("/send", api.SendHandler)
+
+			authorized.GET("/stats", api.StatsHandler)
+			authorized.GET("/logs", api.LogsHandler)
+			authorized.GET("/logs/:id", api.GetLogDetailHandler)
+			authorized.POST("/config/dkim", api.GenerateDKIMHandler)
+			authorized.GET("/config", api.GetConfigHandler)
+			authorized.GET("/config/version", api.GetVersionHandler)                  // 新增
+			authorized.GET("/config/check-update", api.CheckUpdateHandler)            // 新增：版本检查代理
+			authorized.GET("/config/cached-update", api.GetCachedUpdateHandler)       // 获取缓存的版本信息（快速）
+			authorized.GET("/config/update-info", api.GetUpdateInfoHandler)           // 获取更新详情
+			authorized.POST("/config/update", api.PerformUpdateHandler)               // 执行在线更新
+			authorized.GET("/config/update-status", api.GetUpdateStatusHandler)       // 获取更新状态
+			authorized.POST("/config/restart", api.RestartHandler)                    // 重启服务
+			authorized.GET("/config/auto-update", api.GetAutoUpdateConfigHandler)     // 获取自动更新配置
+			authorized.POST("/config/auto-update", api.UpdateAutoUpdateConfigHandler) // 更新自动更新配置
+			authorized.POST("/config", api.UpdateConfigHandler)
+			authorized.POST("/config/test-port", api.TestPortHandler)
+			authorized.POST("/config/kill-process", api.KillProcessHandler) // 新增
+			authorized.POST("/password", api.ChangePasswordHandler)
+			authorized.GET("/backup", api.BackupHandler)
+
+			// 备份管理
+			authorized.GET("/backups", api.ListBackupsHandler)                // 获取备份列表
+			authorized.POST("/backups", api.CreateBackupHandler)              // 创建备份
+			authorized.POST("/backups/:id/restore", api.RestoreBackupHandler) // 恢复备份
+			authorized.DELETE("/backups/:id", api.DeleteBackupHandler)        // 删除备份
+
+			// 两步验证 (TOTP) 管理
+			authorized.GET("/totp/status", api.TOTPStatusHandler)
+			authorized.GET("/totp/setup", api.TOTPSetupHandler)
+			authorized.POST("/totp/enable", api.TOTPEnableHandler)
+			authorized.POST("/totp/disable", api.TOTPDisableHandler)
+
+			// SMTP 管理
+			authorized.POST("/smtp", api.CreateSMTPHandler)
+			authorized.GET("/smtp", api.ListSMTPHandler)
+			authorized.PUT("/smtp/:id", api.UpdateSMTPHandler)
+			authorized.DELETE("/smtp/:id", api.DeleteSMTPHandler)
+
+			// 域名管理
+			authorized.POST("/domains", api.CreateDomainHandler)
+			authorized.GET("/domains", api.ListDomainHandler)
+			authorized.PUT("/domains/:id", api.UpdateDomainHandler) // 新增 Update
+			authorized.DELETE("/domains/:id", api.DeleteDomainHandler)
+			authorized.POST("/domains/:id/verify", api.VerifyDomainHandler)
+			authorized.POST("/domains/:id/bind-cert", api.BindDomainCertHandler) // 绑定证书
+
+			// 模板管理
+			authorized.POST("/templates", api.CreateTemplateHandler)
+			authorized.GET("/templates", api.ListTemplateHandler)
+			authorized.PUT("/templates/:id", api.UpdateTemplateHandler)
+			authorized.DELETE("/templates/:id", api.DeleteTemplateHandler)
+
+			// 密钥管理
+			authorized.GET("/keys", api.ListAPIKeysHandler)
+			authorized.POST("/keys", api.CreateAPIKeyHandler)
+			authorized.DELETE("/keys/:id", api.DeleteAPIKeyHandler)
+
+			// 文件管理
+			authorized.GET("/files", api.ListFilesHandler)
+			authorized.GET("/files/:id/download", api.DownloadFileHandler)
+			authorized.DELETE("/files/:id", api.DeleteFileHandler)
+			authorized.POST("/files/batch_delete", api.BatchDeleteFilesHandler)
+
+			// 转发规则管理
+			authorized.GET("/forward-rules", api.ListForwardRulesHandler)   // ?domain_id=xxx
+			authorized.POST("/forward-rules", api.CreateForwardRuleHandler) // body: {domain_id, ...}
+			authorized.PUT("/forward-rules/:id", api.UpdateForwardRuleHandler)
+			authorized.DELETE("/forward-rules/:id", api.DeleteForwardRuleHandler)
+			authorized.POST("/forward-rules/:id/toggle", api.ToggleForwardRuleHandler)
+
+			// 转发日志
+			authorized.GET("/forward-logs", api.ListForwardLogsHandler)
+			authorized.GET("/forward-stats", api.GetForwardStatsHandler)
+
+			// 联系人管理
+			authorized.GET("/contacts/groups", api.ListContactGroupsHandler)
+			authorized.POST("/contacts/groups", api.CreateContactGroupHandler)
+			authorized.PUT("/contacts/groups/:id", api.UpdateContactGroupHandler)
+			authorized.DELETE("/contacts/groups/:id", api.DeleteContactGroupHandler)
+
+			authorized.GET("/contacts", api.ListContactsHandler)
+			authorized.POST("/contacts", api.CreateContactHandler)
+			authorized.PUT("/contacts/:id", api.UpdateContactHandler)
+			authorized.DELETE("/contacts/:id", api.DeleteContactHandler)
+			authorized.POST("/contacts/import", api.ImportContactsHandler)
+			authorized.GET("/contacts/export", api.ExportContactsHandler)
+			authorized.POST("/contacts/batch_delete", api.BatchDeleteContactsHandler)
+			authorized.GET("/contacts/unsubscribed", api.ListUnsubscribedHandler)
+			authorized.POST("/contacts/:id/resubscribe", api.ResubscribeHandler)
+
+			// 营销活动管理
+			authorized.GET("/campaigns", api.ListCampaignsHandler)
+			authorized.POST("/campaigns", api.CreateCampaignHandler)
+			authorized.PUT("/campaigns/:id", api.UpdateCampaignHandler)
+			authorized.DELETE("/campaigns/:id", api.DeleteCampaignHandler)
+			authorized.POST("/campaigns/:id/start", api.StartCampaignHandler)
+			authorized.POST("/campaigns/:id/pause", api.PauseCampaignHandler)
+			authorized.POST("/campaigns/:id/resume", api.ResumeCampaignHandler)
+			authorized.GET("/campaigns/:id/progress", api.GetCampaignProgressHandler)
+			authorized.POST("/campaigns/:id/test", api.TestCampaignHandler)
+
+			// 收件箱
+			authorized.GET("/inbox", api.ListInboxHandler)
+			authorized.GET("/inbox/stats", api.GetInboxStatsHandler)
+			authorized.GET("/inbox/:id", api.GetInboxItemHandler)
+			authorized.GET("/inbox/:id/attachments", api.GetInboxAttachmentsHandler)
+			authorized.DELETE("/inbox/:id", api.DeleteInboxItemHandler)
+			authorized.POST("/inbox/batch/read", api.BatchMarkReadHandler)
+			authorized.POST("/inbox/batch/delete", api.BatchDeleteHandler)
+
+			// 收件配置
+			authorized.GET("/receiver/config", api.GetReceiverConfigHandler)
+			authorized.PUT("/receiver/config", api.UpdateReceiverConfigHandler)
+
+			// 数据清理
+			authorized.GET("/cleanup/stats", api.GetCleanupStatsHandler)
+			authorized.GET("/cleanup/config", api.GetCleanupConfigHandler)
+			authorized.PUT("/cleanup/config", api.UpdateCleanupConfigHandler)
+			authorized.POST("/cleanup/run", api.RunCleanupHandler)
+			authorized.GET("/cleanup/status", api.GetCleanupStatusHandler)
+
+			// 证书管理
+			authorized.GET("/certs", api.GetCertificatesHandler)
+			authorized.POST("/certs", api.UploadCertificateHandler)
+			authorized.GET("/certs/expiring", api.GetExpiringSoonHandler)
+			authorized.GET("/certs/match/:domain", api.GetMatchingCertsHandler)
+			authorized.GET("/certs/:id", api.GetCertificateHandler)
+			authorized.DELETE("/certs/:id", api.DeleteCertificateHandler)
+			authorized.POST("/certs/:id/apply-starttls", api.ApplyCertToSTARTTLSHandler)
+			authorized.POST("/certs/:id/renew", api.RenewCertificateHandler)
+
+			// ACME (Let's Encrypt) 证书申请
+			authorized.POST("/certs/acme/init", api.ACMEInitHandler)
+			authorized.POST("/certs/acme/verify", api.ACMEVerifyHandler)
+			authorized.GET("/certs/acme/challenge/:domain", api.ACMEChallengeStatusHandler)
+			authorized.DELETE("/certs/acme/challenge/:domain", api.ACMECancelHandler)
+
+			// 域名证书关联
+			authorized.PUT("/domains/:id/cert", api.UpdateDomainCertHandler)
+		}
+	}
+
+	// 5. 静态文件服务
+	// 嵌入式静态文件 (UI)
+	staticFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		log.Fatal(err)
+	}
+	r.StaticFS("/dashboard", http.FS(staticFS))
+
+	// 本地静态文件 (壁纸缓存)
+	// 挂载到 /wallpapers 路径，避免与 /dashboard 通配符冲突
+	r.Static("/wallpapers", "./static/wallpapers")
+	// 兼容根路径资源请求 (fix 404)
+	r.GET("/css/*filepath", func(c *gin.Context) {
+		c.FileFromFS("static/css/"+c.Param("filepath"), http.FS(staticFiles))
+	})
+	r.GET("/js/*filepath", func(c *gin.Context) {
+		c.FileFromFS("static/js/"+c.Param("filepath"), http.FS(staticFiles))
+	})
+
+	// 单独提供 login.html，方便访问
+	r.GET("/login.html", func(c *gin.Context) {
+		c.FileFromFS("static/login.html", http.FS(staticFiles))
+	})
+
+	// 根路径重定向到 dashboard
+	r.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/dashboard/")
+	})
+
+	// 6. 启动版本缓存更新（每60分钟检测一次，用于全局版本提示）
+	api.StartVersionCacheUpdater()
+
+	// 7. 启动自动更新检测
+	api.StartAutoUpdateChecker()
+
+	// 8. 启动服务
+	port := config.AppConfig.Port
+	if port == "" {
+		port = "9901"
+	}
+	host := config.AppConfig.Host
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%s", host, port)
+
+	fmt.Printf("Suxin Mail server starting on %s...\n", addr)
+
+	// 使用 http.Server 实现优雅关闭
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: r,
+	}
+
+	// 在 goroutine 中启动服务
+	go func() {
+		var err error
+		if config.AppConfig.EnableSSL && config.AppConfig.CertFile != "" && config.AppConfig.KeyFile != "" {
+			fmt.Printf("SSL Enabled. Dashboard: https://%s:%s/dashboard/\n", host, port)
+			err = srv.ListenAndServeTLS(config.AppConfig.CertFile, config.AppConfig.KeyFile)
+		} else {
+			fmt.Printf("Dashboard: http://%s:%s/dashboard/\n", host, port)
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server start failed: %v", err)
+		}
+	}()
+
+	// 等待中断信号，优雅关闭
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	// 停止定时任务
+	cleanup.StopScheduler()
+
+	// 给请求 10 秒钟完成
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	log.Println("Server exited gracefully")
+}

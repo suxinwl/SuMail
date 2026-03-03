@@ -1,0 +1,363 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>API 文档 - 速信云邮</title>
+    <link href="/dashboard/css/tailwind.min.css?v=8.0" rel="stylesheet">
+    <script src="/dashboard/js/loader.js?v=8.0"></script>
+    <script src="/dashboard/js/common.js?v=8.0"></script>
+    <script src="/dashboard/js/layout.js?v=8.0"></script>
+    <style>
+        .code-block { font-family: 'Fira Code', monospace; font-size: 0.9em; background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+        .token { color: #ce9178; }
+        .key { color: #9cdcfe; }
+        .keyword { color: #569cd6; }
+    </style>
+</head>
+<body class="hidden" data-i18n-module="api_docs">
+    <div class="mb-8">
+        <h2 class="text-3xl font-bold text-gray-800" data-i18n="api.title">API 接口文档</h2>
+        <p class="text-gray-500 mt-1" data-i18n="api.subtitle">通过 HTTP RESTful API 集成邮件发送功能</p>
+    </div>
+
+    <div class="space-y-8 w-full">
+        
+        <!-- AI 接入提示词 -->
+        <div class="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl shadow-sm border border-purple-100 p-8">
+            <h3 class="text-xl font-bold text-purple-900 mb-4 flex items-center">
+                <span class="bg-purple-100 text-purple-600 p-1.5 rounded-lg mr-3">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </span>
+                <span data-i18n="api.ai.title">🤖 AI 接入提示词 (Prompt)</span>
+            </h3>
+            <p class="text-purple-700 mb-4 text-sm" data-i18n="api.ai.desc">
+                将以下提示词复制给 ChatGPT、Claude 或 Cursor，让 AI 帮您快速编写对接代码。
+            </p>
+            <div class="bg-white rounded-lg border border-purple-200 p-4 relative group">
+                <button onclick="copyPrompt()" class="absolute top-2 right-2 bg-purple-100 text-purple-600 px-3 py-1 rounded text-xs font-bold hover:bg-purple-200 transition" data-i18n="api.ai.copy_btn">复制提示词</button>
+                <!-- 内容将由 JS 动态渲染 -->
+                <pre class="text-xs text-gray-600 whitespace-pre-wrap font-mono" id="ai-prompt">Loading...</pre>
+            </div>
+            <p class="text-xs text-gray-400 mt-2 ml-1" data-i18n="api.ai.usage">💡 使用方法：复制上方内容发送给 ChatGPT/Claude，并将 <code>[Python/Java...]</code> 替换为您使用的编程语言。</p>
+        </div>
+
+        <!-- 认证部分 -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <h3 class="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                <span class="bg-blue-100 text-blue-600 p-1.5 rounded-lg mr-3">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                </span>
+                <span data-i18n="api.auth.title">鉴权认证</span>
+            </h3>
+            <p class="text-gray-600 mb-4" data-i18n="api.auth.desc">
+                请前往 <strong><a href="/dashboard/keys.html" class="text-blue-600 hover:underline">密钥管理</a></strong> 页面生成永久 API Key (以 <code>api_key_</code> 开头)。
+                <br>所有 API 请求必须在 HTTP Header 中包含：
+            </p>
+            <div class="code-block mb-4">
+                Authorization: Bearer <span class="token">your_api_key_here</span>
+            </div>
+        </div>
+
+        <!-- 发送接口 -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-900 flex items-center">
+                    <span class="bg-green-100 text-green-600 p-1.5 rounded-lg mr-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                    </span>
+                    <span data-i18n="api.send.title">发送邮件接口</span>
+                </h3>
+                <span class="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">POST</span>
+            </div>
+            
+            <div class="mb-6">
+                <p class="font-mono text-sm bg-gray-100 p-3 rounded border border-gray-200 text-gray-700">
+                    /api/v1/send
+                </p>
+            </div>
+
+            <h4 class="font-bold text-gray-800 mb-3 text-sm uppercase tracking-wider" data-i18n="api.send.params_title">请求参数 (JSON)</h4>
+            <div class="overflow-x-auto mb-6">
+                <table class="w-full text-sm text-left text-gray-600 border rounded-lg">
+                    <thead class="bg-gray-50 text-gray-700 font-bold">
+                        <tr>
+                            <th class="px-4 py-2 border-b" data-i18n="api.table.field">字段</th>
+                            <th class="px-4 py-2 border-b" data-i18n="api.table.type">类型</th>
+                            <th class="px-4 py-2 border-b" data-i18n="api.table.required">必填</th>
+                            <th class="px-4 py-2 border-b" data-i18n="api.table.desc">说明</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">to</td>
+                            <td class="px-4 py-2">String</td>
+                            <td class="px-4 py-2 text-red-500" data-i18n="api.req.yes">是</td>
+                            <td class="px-4 py-2" data-i18n="api.param.to">收件人邮箱地址</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">subject</td>
+                            <td class="px-4 py-2">String</td>
+                            <td class="px-4 py-2 text-red-500" data-i18n="api.req.cond">条件</td>
+                            <td class="px-4 py-2" data-i18n="api.param.subject">邮件主题</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">body</td>
+                            <td class="px-4 py-2">String</td>
+                            <td class="px-4 py-2 text-red-500" data-i18n="api.req.cond">条件</td>
+                            <td class="px-4 py-2" data-i18n="api.param.body">邮件正文。若未提供 <code>template_id</code> 则必填。</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">template_id</td>
+                            <td class="px-4 py-2">Integer</td>
+                            <td class="px-4 py-2 text-gray-400" data-i18n="api.req.no">否</td>
+                            <td class="px-4 py-2" data-i18n="api.param.template_id">使用预设模板 ID。若提供，会自动覆盖 subject/body，并支持变量替换。</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">variables</td>
+                            <td class="px-4 py-2">Object</td>
+                            <td class="px-4 py-2 text-gray-400" data-i18n="api.req.no">否</td>
+                            <td class="px-4 py-2" data-i18n="api.param.variables">模板变量 (键值对)。例如: <code>{"name": "张三"}</code> 可替换模板中的 <code>{{.name}}</code></td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">from</td>
+                            <td class="px-4 py-2">String</td>
+                            <td class="px-4 py-2 text-gray-400" data-i18n="api.req.no">否</td>
+                            <td class="px-4 py-2" data-i18n="api.param.from">发件人地址 (不填则使用系统默认)</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">channel_id</td>
+                            <td class="px-4 py-2">Integer</td>
+                            <td class="px-4 py-2 text-gray-400" data-i18n="api.req.no">否</td>
+                            <td class="px-4 py-2" data-i18n="api.param.channel_id">指定发送通道 ID (0 或不填为自动/Direct, >0 为指定 SMTP 配置 ID)</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2 font-mono text-blue-600">attachments</td>
+                            <td class="px-4 py-2">Array</td>
+                            <td class="px-4 py-2 text-gray-400" data-i18n="api.req.no">否</td>
+                            <td class="px-4 py-2" data-i18n="api.param.attachments">附件列表。支持 <code>content</code> (Base64) 或 <code>url</code> (远程地址)。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h4 class="font-bold text-gray-800 mb-3 text-sm uppercase tracking-wider" data-i18n="api.example.curl_title">调用示例 (cURL)</h4>
+            <div class="code-block mb-6">
+# 示例 1: 直接发送 HTML 内容
+curl -X POST <span id="curl-url">http://localhost:9901/api/v1/send</span> \
+  -H "Authorization: Bearer <span class="token">your_api_key_here</span>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    <span class="key">"to"</span>: "user@example.com",
+    <span class="key">"subject"</span>: "欢迎注册速信云邮",
+    <span class="key">"body"</span>: "<h1>你好！</h1><p>这是一封测试邮件。</p>"
+  }'
+
+# 示例 2: 使用模板 + 变量
+curl -X POST <span id="curl-url-tpl">http://localhost:9901/api/v1/send</span> \
+  -H "Authorization: Bearer <span class="token">your_api_key_here</span>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    <span class="key">"to"</span>: "user@example.com",
+    <span class="key">"template_id"</span>: 1,
+    <span class="key">"variables"</span>: {
+       "name": "张三",
+       "code": "8848"
+    }
+  }'
+
+# 示例 3: 发送远程附件
+curl -X POST <span id="curl-url-att">http://localhost:9901/api/v1/send</span> \
+  -H "Authorization: Bearer <span class="token">your_api_key_here</span>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    <span class="key">"to"</span>: "user@example.com",
+    <span class="key">"subject"</span>: "发票文件",
+    <span class="key">"body"</span>: "请查收附件。",
+    <span class="key">"attachments"</span>: [
+       {
+         "filename": "invoice_2024.pdf",
+         "url": "https://oss.example.com/download/inv_123.pdf",
+         "content_type": "application/pdf"
+       }
+    ]
+  }'
+            </div>
+
+            <h4 class="font-bold text-gray-800 mb-3 text-sm uppercase tracking-wider" data-i18n="api.example.resp_async">响应示例 (异步入队成功 - HTTP 202)</h4>
+            <div class="code-block mb-6">
+{
+  <span class="key">"message"</span>: <span class="token">"Email queued successfully"</span>,
+  <span class="key">"queue_id"</span>: 1024
+}
+            </div>
+
+            <h4 class="font-bold text-gray-800 mb-3 text-sm uppercase tracking-wider" data-i18n="api.example.resp_error_title">错误响应格式</h4>
+            <div class="code-block mb-6">
+<span class="keyword">// HTTP 400 - 请求参数错误</span>
+{ <span class="key">"error"</span>: <span class="token">"Template not found"</span> }
+
+<span class="keyword">// HTTP 401 - 认证失败</span>
+{ <span class="key">"error"</span>: <span class="token">"Invalid token or API key"</span> }
+
+<span class="keyword">// HTTP 403 - 权限不足</span>
+{ <span class="key">"error"</span>: <span class="token">"API Key does not have permission to access this endpoint"</span> }
+
+<span class="keyword">// HTTP 429 - 频率超限</span>
+{ <span class="key">"error"</span>: <span class="token">"Too many requests, please try again later"</span> }
+
+<span class="keyword">// HTTP 500 - 服务器错误</span>
+{ <span class="key">"error"</span>: <span class="token">"Failed to queue email: ..."</span> }
+            </div>
+
+            <h4 class="font-bold text-gray-800 mb-3 text-sm uppercase tracking-wider" data-i18n="api.example.status_codes_title">HTTP 状态码说明</h4>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left text-gray-600 border rounded-lg">
+                    <thead class="bg-gray-50 text-gray-700 font-bold">
+                        <tr>
+                            <th class="px-4 py-2 border-b">状态码</th>
+                            <th class="px-4 py-2 border-b">含义</th>
+                            <th class="px-4 py-2 border-b">处理建议</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <tr>
+                            <td class="px-4 py-2"><span class="bg-green-100 text-green-800 px-2 py-0.5 rounded font-mono text-xs">202</span></td>
+                            <td class="px-4 py-2">邮件已加入发送队列</td>
+                            <td class="px-4 py-2 text-gray-400">成功，无需处理</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2"><span class="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-mono text-xs">400</span></td>
+                            <td class="px-4 py-2">请求参数错误</td>
+                            <td class="px-4 py-2 text-gray-400">检查必填字段和格式</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2"><span class="bg-red-100 text-red-800 px-2 py-0.5 rounded font-mono text-xs">401</span></td>
+                            <td class="px-4 py-2">认证失败</td>
+                            <td class="px-4 py-2 text-gray-400">检查 API Key 或 Token 是否有效</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2"><span class="bg-red-100 text-red-800 px-2 py-0.5 rounded font-mono text-xs">403</span></td>
+                            <td class="px-4 py-2">权限不足</td>
+                            <td class="px-4 py-2 text-gray-400">API Key 仅支持 /send、/stats、/files 接口</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2"><span class="bg-orange-100 text-orange-800 px-2 py-0.5 rounded font-mono text-xs">429</span></td>
+                            <td class="px-4 py-2">请求频率超限</td>
+                            <td class="px-4 py-2 text-gray-400">实现指数退避重试 (建议最大间隔 60s)</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-2"><span class="bg-gray-100 text-gray-800 px-2 py-0.5 rounded font-mono text-xs">500</span></td>
+                            <td class="px-4 py-2">服务器内部错误</td>
+                            <td class="px-4 py-2 text-gray-400">稍后重试，持续出现请联系管理员</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 联系人管理 -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <h3 class="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                <span class="bg-purple-100 text-purple-600 p-1.5 rounded-lg mr-3">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                </span>
+                <span data-i18n="api.contacts.title">联系人管理</span>
+            </h3>
+            
+            <div class="space-y-6">
+                <div>
+                    <h4 class="font-bold text-gray-700 text-sm mb-2">添加联系人</h4>
+                    <p class="font-mono text-sm bg-gray-100 p-2 rounded mb-2">POST /api/v1/contacts</p>
+                    <div class="code-block">
+{
+  <span class="key">"email"</span>: "user@example.com",
+  <span class="key">"name"</span>: "张三",
+  <span class="key">"group_id"</span>: 1
+}
+                    </div>
+                </div>
+                
+                <div>
+                    <h4 class="font-bold text-gray-700 text-sm mb-2">批量导入</h4>
+                    <p class="font-mono text-sm bg-gray-100 p-2 rounded mb-2">POST /api/v1/contacts/import</p>
+                    <div class="code-block">
+{
+  <span class="key">"group_id"</span>: 1,
+  <span class="key">"data"</span>: "u1@test.com,User1\nu2@test.com,User2"
+}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模板查询接口 -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-900 flex items-center">
+                    <span class="bg-indigo-100 text-indigo-600 p-1.5 rounded-lg mr-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    </span>
+                    <span data-i18n="api.tpl.title">查询模板列表</span>
+                </h3>
+                <span class="bg-green-100 text-green-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">GET</span>
+            </div>
+            
+            <div class="mb-6">
+                <p class="font-mono text-sm bg-gray-100 p-3 rounded border border-gray-200 text-gray-700">
+                    /api/v1/templates
+                </p>
+            </div>
+
+            <h4 class="font-bold text-gray-800 mb-3 text-sm uppercase tracking-wider" data-i18n="api.example.resp_json">响应示例 (JSON)</h4>
+            <div class="code-block">
+[
+  {
+    <span class="key">"id"</span>: 1,
+    <span class="key">"name"</span>: "注册验证码",
+    <span class="key">"subject"</span>: "欢迎注册 - 验证码 {{.code}}",
+    <span class="key">"body"</span>: "<h1>您的验证码是 {{.code}}</h1>..."
+  },
+  {
+    <span class="key">"id"</span>: 2,
+    <span class="key">"name"</span>: "密码重置",
+    <span class="key">"subject"</span>: "重置您的密码",
+    <span class="key">"body"</span>: "..."
+  }
+]
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        Auth.check();
+        
+        const baseUrl = window.location.origin + '/api/v1';
+
+        function renderPrompt() {
+            // 获取翻译后的模板并替换 Base URL
+            if (typeof I18n !== 'undefined' && I18n.isReady) {
+                const template = I18n.t('api.ai.prompt_template');
+                const prompt = template.replace('{base_url}', baseUrl);
+                document.getElementById('ai-prompt').innerText = prompt;
+            }
+        }
+        
+        document.getElementById('curl-url').innerText = baseUrl + '/send';
+
+        function copyPrompt() {
+            const text = document.getElementById('ai-prompt').innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                showToast(I18n.t('api.toast.copied'));
+            });
+        }
+
+        // 等待 I18n 加载完成后渲染 Prompt
+        if (typeof I18n !== 'undefined' && I18n.isReady) {
+            renderPrompt();
+        } else {
+            document.addEventListener('i18n-ready', renderPrompt);
+        }
+    </script>
+</body>
+</html>
